@@ -1,0 +1,105 @@
+{
+  "channels": [
+    {
+      "name": "Line1",
+      "devices": [
+        {
+          "name": "Mixer01",
+          "tags": [
+            {
+              "name": "Temperature",
+              "dataType": "Double",
+              "access": "ReadWrite",
+              "provider": {
+                "type": "random",
+                "intervalMs": 1000,
+                "min": 20.0,
+                "max": 35.0
+              },
+              "writePolicy": {
+                "mode": "ttl",
+                "ttlSeconds": 10
+              }
+            },
+            {
+              "name": "Pressure",
+              "dataType": "Double",
+              "access": "ReadWrite",
+              "provider": {
+                "type": "sine",
+                "intervalMs": 1000,
+                "amplitude": 0.5,
+                "offset": 2.0,
+                "periodSeconds": 12.0
+              },
+              "writePolicy": {
+                "mode": "ttl",
+                "ttlSeconds": 10
+              }
+            },
+            {
+              "name": "MachineRunning",
+              "dataType": "Boolean",
+              "access": "ReadWrite",
+              "provider": {
+                "type": "counter",
+                "intervalMs": 3000,
+                "start": 0,
+                "step": 1,
+                "min": 0,
+                "max": 1,
+                "wrap": true
+              },
+              "writePolicy": {
+                "mode": "ttl",
+                "ttlSeconds": 10
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Line2",
+      "devices": [
+        {
+          "name": "Packing01",
+          "tags": [
+            {
+              "name": "Counter",
+              "dataType": "Int32",
+              "access": "ReadOnly",
+              "provider": {
+                "type": "counter",
+                "intervalMs": 1000,
+                "start": 0,
+                "step": 1,
+                "min": 0,
+                "max": 100000,
+                "wrap": true
+              },
+              "writePolicy": {
+                "mode": "ttl",
+                "ttlSeconds": 10
+              }
+            },
+            {
+              "name": "StatusText",
+              "dataType": "String",
+              "access": "ReadOnly",
+              "provider": {
+                "type": "constant",
+                "intervalMs": 1000,
+                "value": "RUNNING"
+              },
+              "writePolicy": {
+                "mode": "ttl",
+                "ttlSeconds": 10
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\DriverGateway.Core\DriverGateway.Core.csproj" />
+    <ProjectReference Include="..\DriverGateway.Plugins.Abstractions\DriverGateway.Plugins.Abstractions.csproj" />
+    <ProjectReference Include="..\DriverGateway.Plugins.MockSimulator\DriverGateway.Plugins.MockSimulator.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\DriverGateway.Plugins.S7Comm\DriverGateway.Plugins.S7Comm.csproj" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="..\DriverGateway.Plugins.ModbusTcp\DriverGateway.Plugins.ModbusTcp.csproj" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="OPCFoundation.NetStandard.Opc.Ua" Version="1.5.376.213" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="gateway.config.json">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <Target Name="CopyPluginAssemblies" AfterTargets="Build">
+    <PropertyGroup>
+      <PluginsOutputDir>$(OutDir)plugins\</PluginsOutputDir>
+    </PropertyGroup>
+    <MakeDir Directories="$(PluginsOutputDir)" />
+    <ItemGroup>
+      <BuiltPluginDlls Include="$(SolutionDir)DriverGateway.Plugins.MockSimulator\bin\$(Configuration)\net8.0\DriverGateway.Plugins.MockSimulator.dll" />
+      <BuiltPluginDlls Include="$(SolutionDir)DriverGateway.Plugins.S7Comm\bin\$(Configuration)\net8.0\DriverGateway.Plugins.S7Comm.dll" />
+      <BuiltPluginDlls Include="$(SolutionDir)DriverGateway.Plugins.ModbusTcp\bin\$(Configuration)\net8.0\DriverGateway.Plugins.ModbusTcp.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(BuiltPluginDlls)" DestinationFolder="$(PluginsOutputDir)" SkipUnchangedFiles="true" Condition="Exists('%(BuiltPluginDlls.Identity)')" />
+  </Target>
+
+</Project>

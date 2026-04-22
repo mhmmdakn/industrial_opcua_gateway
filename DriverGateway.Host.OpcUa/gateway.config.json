@@ -1,0 +1,166 @@
+{
+  "drivers": [
+    {
+      "name": "MockDriver1",
+      "type": "mock-simulator",
+      "settings": {},
+      "channels": [
+        {
+          "name": "Line1",
+          "endpoint": "mock://line1",
+          "retry": {
+            "initialDelayMs": 500,
+            "maxDelayMs": 10000,
+            "jitterFactor": 0.2,
+            "healthCheckIntervalMs": 2000
+          },
+          "scanClasses": {
+            "fast": 500,
+            "normal": 1000,
+            "slow": 3000
+          },
+          "settings": {
+            "disconnectRate": 0.0
+          },
+          "devices": [
+            {
+              "name": "Mixer01",
+              "settings": {},
+              "tags": [
+                {
+                  "name": "Temperature",
+                  "dataType": "Double",
+                  "address": "TEMP:1",
+                  "scanClass": "fast",
+                  "write": { "mode": "immediate" },
+                  "settings": {}
+                },
+                {
+                  "name": "MachineRunning",
+                  "dataType": "Boolean",
+                  "address": "RUN:1",
+                  "scanClass": "normal",
+                  "write": { "mode": "queued" },
+                  "settings": {}
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "S7Driver1",
+      "type": "s7comm",
+      "settings": {},
+      "channels": [
+        {
+          "name": "S7Ch1",
+          "endpoint": "s7://192.168.1.10:102",
+          "retry": {
+            "initialDelayMs": 500,
+            "maxDelayMs": 15000,
+            "jitterFactor": 0.2,
+            "healthCheckIntervalMs": 3000
+          },
+          "scanClasses": {
+            "fast": 500,
+            "normal": 1000
+          },
+          "settings": {
+            "maxBlockBytes": 222
+          },
+          "devices": [
+            {
+              "name": "PLC1",
+              "settings": {},
+              "tags": [
+                {
+                  "name": "DbCounter",
+                  "dataType": "Int32",
+                  "address": "DB1.DBD0",
+                  "scanClass": "normal",
+                  "write": { "mode": "immediate" },
+                  "settings": {}
+                },
+                {
+                  "name": "DbFlag",
+                  "dataType": "Boolean",
+                  "address": "DB1.DBX4.0",
+                  "scanClass": "fast",
+                  "write": { "mode": "queued" },
+                  "settings": {}
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ModbusDriver1",
+      "type": "modbus-tcp",
+      "channels": [
+        {
+          "name": "MbCh1",
+          "endpoint": "127.0.0.1:502",
+          "retry": {
+            "initialDelayMs": 500,
+            "maxDelayMs": 15000,
+            "jitterFactor": 0.2,
+            "healthCheckIntervalMs": 3000
+          },
+          "scanClasses": {
+            "normal": 1000,
+            "slow": 2000
+          },
+          "settings": {
+            "maxRegisterSpan": 120,
+            "unitId": "1",
+            "wordOrder": "low-word-first"
+          },
+          "devices": [
+            {
+              "name": "PowerMeter01",
+              "settings": {},
+              "tags": [
+                {
+                  "name": "Voltage1",
+                  "dataType": "Float",
+                  "address": "HR:0",
+                  "scanClass": "normal",
+                  "write": { "mode": "immediate" },
+                  "settings": {}
+                  },
+                {
+                  "name": "Voltage2",
+                  "dataType": "Float",
+                  "address": "HR:2",
+                  "scanClass": "normal",
+                  "write": { "mode": "queued" },
+                  "settings": {}
+                },
+                {
+                  "name": "Voltage3",
+                  "dataType": "Float",
+                  "address": "HR:4",
+                  "scanClass": "normal",
+                  "write": { "mode": "queued" },
+                  "settings": {}
+                },
+                {
+                  "name": "BreakerClosed",
+                  "dataType": "Boolean",
+                  "address": "COIL:10",
+                  "scanClass": "slow",
+                  "write": { "mode": "immediate" },
+                  "settings": {}
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

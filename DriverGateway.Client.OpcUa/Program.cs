@@ -70,7 +70,7 @@ internal static class Program
         Console.WriteLine($"Trust Mode: {(autoAcceptUntrusted ? "Debug auto-trust" : "Release manual trust")}");
 
         RunOneShotRead(_session, clientConfig.ReadNodes);
-        ApplyWritesFromConfig(_session, clientConfig.Writes);
+        
         if (options.ApplyWrites)
         {
             ApplyWritesFromConfig(_session, clientConfig.Writes);
@@ -444,8 +444,8 @@ internal sealed record ParsedNode(string Raw, NodeId NodeId);
 
 internal sealed class ClientOptions
 {
-    //public string ConfigPath { get; set; } = "client.config.json";
-    public string ConfigPath { get; set; } = "client.write.json";
+    public string ConfigPath { get; set; } = "client.config.json";
+    //public string ConfigPath { get; set; } = "client.write.json";
 
     public bool ApplyWrites { get; set; }
 

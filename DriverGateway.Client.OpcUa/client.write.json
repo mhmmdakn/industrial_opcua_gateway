@@ -1,11 +1,11 @@
 {
-  "endpoint": "opc.tcp://localhost:4842/UA/DriverGateway",
+  "endpoint": "opc.tcp://localhost:4840/UA/DriverGateway",
   "writes": [
   
     {
       "nodeId": "ns=2;s=MbCh1.PowerMeter01.Voltage1",
       "type": "Float",
-      "value": 230.6
+      "value": 230.0
     }
   ]
 }

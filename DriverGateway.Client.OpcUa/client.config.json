@@ -1,5 +1,5 @@
 {
-  "endpoint": "opc.tcp://localhost:4842/UA/DriverGateway",
+  "endpoint": "opc.tcp://localhost:4840/UA/DriverGateway",
   "session": {
     "sessionTimeoutMs": 60000,
     "reconnectPeriodMs": 5000,
@@ -14,10 +14,7 @@
     "ns=2;s=MbCh1.PowerMeter01.Voltage2",
     "ns=2;s=MbCh1.PowerMeter01.Voltage3"
   ],
-  "subscribeNodes": [
-    "ns=2;s=Line1.Mixer01.Temperature",
-    "ns=2;s=S7Ch1.PLC1.DbFlag",
-    "ns=2;s=MbCh1.PowerMeter01.BreakerClosed",
+  "subscribeNodes": [    
     "ns=2;s=MbCh1.PowerMeter01.Voltage1",
     "ns=2;s=MbCh1.PowerMeter01.Voltage2",
     "ns=2;s=MbCh1.PowerMeter01.Voltage3"

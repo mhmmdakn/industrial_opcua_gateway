@@ -187,7 +187,7 @@ internal static class Program
 
 internal sealed class GatewayHostOptions
 {
-    public string Endpoint { get; set; } = "opc.tcp://localhost:4842/UA/DriverGateway";
+    public string Endpoint { get; set; } = "opc.tcp://localhost:4840/UA/DriverGateway";
     public string Name { get; set; } = "DriverGatewayHostOpcUa";
     public string ConfigPath { get; set; } = "gateway.config.json";
     public string PluginsPath { get; set; } = "plugins";

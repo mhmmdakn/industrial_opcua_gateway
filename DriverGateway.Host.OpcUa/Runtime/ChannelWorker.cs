@@ -77,12 +77,34 @@ internal sealed class ChannelWorker : IAsyncDisposable
 
     public async Task<WriteResult> WriteImmediateAsync(TagDefinition tag, object? value, CancellationToken cancellationToken)
     {
+        if (_runtime.GetConnectionState() != ConnectionState.Connected)
+        {
+            try
+            {
+                await TryStartRuntimeAsync(cancellationToken).ConfigureAwait(false);
+                _failureAttempt = 0;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _failureAttempt++;
+                var backoff = _backoffPolicy.NextDelay(_failureAttempt);
+                _log?.Invoke(
+                    $"[CHANNEL:{_channel.Name}] Write reconnect failure #{_failureAttempt}. {ex.Message}. Next retry window {backoff.TotalMilliseconds:0} ms.");
+                return WriteResult.Fail($"Channel reconnect failed: {ex.Message}");
+            }
+        }
+
         await _ioGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             var result = await _runtime.WriteAsync(tag, value, cancellationToken).ConfigureAwait(false);
             if (result.Success)
             {
+                _failureAttempt = 0;
                 _cache.Upsert(new TagValueSnapshot(tag.NodeIdentifier, value, DateTime.UtcNow, "Good"));
             }
 
@@ -121,18 +143,19 @@ internal sealed class ChannelWorker : IAsyncDisposable
     private async Task RunLoopAsync(CancellationToken cancellationToken)
     {
         DateTime lastHealthCheckUtc = DateTime.MinValue;
-        await TryStartRuntimeAsync(cancellationToken).ConfigureAwait(false);
 
         while (!cancellationToken.IsCancellationRequested)
         {
             try
             {
+                if (_runtime.GetConnectionState() != ConnectionState.Connected)
+                {
+                    await TryStartRuntimeAsync(cancellationToken).ConfigureAwait(false);
+                    _failureAttempt = 0;
+                }
+
                 var activeDemand = _demandTracker.GetActiveDemand(DateTime.UtcNow);
-                var demandedTags = _tagsByNodeId
-                    .Where(static kvp => kvp.Value is not null)
-                    .Where(kvp => activeDemand.Contains(kvp.Key))
-                    .Select(static kvp => kvp.Value)
-                    .ToArray();
+                var demandedTags = BuildDemandedTags(activeDemand);
 
                 if (demandedTags.Length > 0)
                 {
@@ -196,7 +219,20 @@ internal sealed class ChannelWorker : IAsyncDisposable
                 var backoff = _backoffPolicy.NextDelay(_failureAttempt);
                 _log?.Invoke($"[CHANNEL:{_channel.Name}] Loop failure #{_failureAttempt}. {ex.Message}. Retry in {backoff.TotalMilliseconds:0} ms.");
 
-                await TryStartRuntimeAsync(cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    await TryStartRuntimeAsync(cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception startEx)
+                {
+                    _log?.Invoke(
+                        $"[CHANNEL:{_channel.Name}] Reconnect attempt failed after loop failure #{_failureAttempt}: {startEx.Message}");
+                }
+
                 await Task.Delay(backoff, cancellationToken).ConfigureAwait(false);
             }
         }
@@ -234,6 +270,25 @@ internal sealed class ChannelWorker : IAsyncDisposable
                 queuedWrite.Completion.TrySetResult(WriteResult.Fail(ex.Message));
             }
         }
+    }
+
+    private TagDefinition[] BuildDemandedTags(IReadOnlySet<string> activeDemand)
+    {
+        if (activeDemand.Count == 0)
+        {
+            return [];
+        }
+
+        var demandedTags = new List<TagDefinition>(activeDemand.Count);
+        foreach (var nodeIdentifier in activeDemand)
+        {
+            if (_tagsByNodeId.TryGetValue(nodeIdentifier, out var tag))
+            {
+                demandedTags.Add(tag);
+            }
+        }
+
+        return demandedTags.ToArray();
     }
 
     private sealed record QueuedWriteCommand(

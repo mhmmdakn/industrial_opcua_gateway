@@ -344,6 +344,11 @@ internal sealed class ModbusTcpChannelRuntime : IChannelRuntime
 
             return output;
         }
+        catch (InvalidOperationException ex) when (IsDisconnectedStateException(ex))
+        {
+            MarkDisconnected("read", ex);
+            throw new InvalidOperationException($"Modbus read failed: {ex.Message}", ex);
+        }
         catch (Exception ex) when (IsCommunicationException(ex))
         {
             MarkDisconnected("read", ex);
@@ -389,6 +394,11 @@ internal sealed class ModbusTcpChannelRuntime : IChannelRuntime
         catch (ModbusDeviceException ex)
         {
             return WriteResult.Fail(ex.Message);
+        }
+        catch (InvalidOperationException ex) when (IsDisconnectedStateException(ex))
+        {
+            MarkDisconnected("write", ex);
+            return WriteResult.Fail($"Modbus write failed: {ex.Message}");
         }
         catch (Exception ex) when (IsCommunicationException(ex))
         {
@@ -929,6 +939,11 @@ internal sealed class ModbusTcpChannelRuntime : IChannelRuntime
             or SocketException
             or ObjectDisposedException
             or ModbusProtocolException;
+    }
+
+    private static bool IsDisconnectedStateException(InvalidOperationException ex)
+    {
+        return ex.Message.Contains("runtime is disconnected", StringComparison.OrdinalIgnoreCase);
     }
 
     private static void ValidateReadRange(ModbusArea area, int startOffset, int quantity)

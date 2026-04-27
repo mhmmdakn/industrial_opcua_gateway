@@ -25,6 +25,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DriverGateway.SmokeTests", 
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DriverGateway.Client.OpcUa", "DriverGateway.Client.OpcUa\DriverGateway.Client.OpcUa.csproj", "{DCB19774-E18B-4383-89B0-72FB8E6A610B}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DriverGateway.Testing.ModbusServer", "DriverGateway.Testing.ModbusServer\DriverGateway.Testing.ModbusServer.csproj", "{4F061445-D041-46E5-B7BE-37E7E36F70CB}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -167,6 +169,18 @@ Global
 		{DCB19774-E18B-4383-89B0-72FB8E6A610B}.Release|x64.Build.0 = Release|Any CPU
 		{DCB19774-E18B-4383-89B0-72FB8E6A610B}.Release|x86.ActiveCfg = Release|Any CPU
 		{DCB19774-E18B-4383-89B0-72FB8E6A610B}.Release|x86.Build.0 = Release|Any CPU
+		{4F061445-D041-46E5-B7BE-37E7E36F70CB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4F061445-D041-46E5-B7BE-37E7E36F70CB}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4F061445-D041-46E5-B7BE-37E7E36F70CB}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{4F061445-D041-46E5-B7BE-37E7E36F70CB}.Debug|x64.Build.0 = Debug|Any CPU
+		{4F061445-D041-46E5-B7BE-37E7E36F70CB}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{4F061445-D041-46E5-B7BE-37E7E36F70CB}.Debug|x86.Build.0 = Debug|Any CPU
+		{4F061445-D041-46E5-B7BE-37E7E36F70CB}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4F061445-D041-46E5-B7BE-37E7E36F70CB}.Release|Any CPU.Build.0 = Release|Any CPU
+		{4F061445-D041-46E5-B7BE-37E7E36F70CB}.Release|x64.ActiveCfg = Release|Any CPU
+		{4F061445-D041-46E5-B7BE-37E7E36F70CB}.Release|x64.Build.0 = Release|Any CPU
+		{4F061445-D041-46E5-B7BE-37E7E36F70CB}.Release|x86.ActiveCfg = Release|Any CPU
+		{4F061445-D041-46E5-B7BE-37E7E36F70CB}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

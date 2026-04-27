@@ -2,8 +2,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\DriverGateway.Core\DriverGateway.Core.csproj" />
+    <ProjectReference Include="..\DriverGateway.Host.OpcUa\DriverGateway.Host.OpcUa.csproj" />
     <ProjectReference Include="..\DriverGateway.Plugins.S7Comm\DriverGateway.Plugins.S7Comm.csproj" />
     <ProjectReference Include="..\DriverGateway.Plugins.ModbusTcp\DriverGateway.Plugins.ModbusTcp.csproj" />
+    <ProjectReference Include="..\DriverGateway.Testing.ModbusServer\DriverGateway.Testing.ModbusServer.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

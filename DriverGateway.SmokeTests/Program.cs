@@ -1,11 +1,14 @@
 using System.Buffers.Binary;
 using System.Net;
 using System.Net.Sockets;
+using DriverGateway.Host.OpcUa.Runtime;
+using DriverGateway.Core.Interfaces;
 using DriverGateway.Core.Models;
 using DriverGateway.Core.Services;
 using DriverGateway.Plugins.Abstractions;
 using DriverGateway.Plugins.ModbusTcp;
 using DriverGateway.Plugins.S7Comm;
+using DriverGateway.Testing.ModbusServer;
 
 var failures = new List<string>();
 
@@ -19,6 +22,9 @@ await Run("Modbus supports Word/DWord/Float read-write conversions", TestModbusA
 await Run("Modbus String tags return Bad on read and Fail on write", TestModbusStringBehaviorAsync, failures);
 await Run("Modbus exception response is surfaced to caller", TestModbusExceptionResponseAsync, failures);
 await Run("Modbus MBAP transaction mismatch disconnects runtime", TestModbusTransactionMismatchAsync, failures);
+await Run("Modbus write-only channel reconnects after server restart", TestModbusWriteOnlyChannelReconnectAsync, failures);
+await Run("Modbus subscription channel reconnects after server restart", TestModbusSubscriptionChannelReconnectAsync, failures);
+await Run("Modbus connects when server becomes available after startup", TestModbusConnectsWhenServerStartsLaterAsync, failures);
 
 if (failures.Count == 0)
 {
@@ -390,6 +396,270 @@ static async Task TestModbusTransactionMismatchAsync()
     }
 }
 
+static async Task TestModbusWriteOnlyChannelReconnectAsync()
+{
+    var port = GetFreeTcpPort();
+    var tag = CreateModbusTag("Drv1.MbCh1.Dev1.Setpoint", "HR:10", TagDataType.Int16);
+    var tagsByNodeId = new Dictionary<string, TagDefinition>(StringComparer.OrdinalIgnoreCase)
+    {
+        [tag.NodeIdentifier] = tag
+    };
+    var scanClasses = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase) { ["default"] = 1_000 };
+    var channel = new ChannelDefinition(
+        Name: "MbCh1",
+        Endpoint: $"127.0.0.1:{port}",
+        Settings: TagDefinition.EmptySettings,
+        RetryPolicy: new RetryPolicyOptions(InitialDelayMs: 200, MaxDelayMs: 1_000, JitterFactor: 0, HealthCheckIntervalMs: 60_000),
+        ScanClasses: scanClasses,
+        Devices: [new DeviceDefinition("Dev1", TagDefinition.EmptySettings, [tag])]);
+    var driver = new DriverDefinition(
+        Name: "Drv1",
+        DriverType: ModbusTcpDriverPlugin.TypeName,
+        Settings: TagDefinition.EmptySettings,
+        Channels: [channel]);
+    var runtimeContext = new ChannelRuntimeContext(driver, channel, tagsByNodeId, null);
+    var runtime = new ModbusTcpDriverPlugin().CreateChannelRuntime(runtimeContext);
+
+    await using var worker = new ChannelWorker(
+        channel,
+        tagsByNodeId,
+        runtime,
+        new DemandTracker(),
+        new InMemoryTagValueCache(),
+        null);
+
+    ScriptedModbusServer? server = null;
+    try
+    {
+        server = await ScriptedModbusServer.StartAsync(static request => request.FunctionCode switch
+        {
+            0x06 => ModbusServerResponse.EchoWrite(request.TransactionId, request.UnitId, request.Pdu),
+            0x10 => ModbusServerResponse.WriteMultipleRegistersAck(request.TransactionId, request.UnitId, request.StartAddress, request.Quantity),
+            0x03 => ModbusServerResponse.ReadRegisters(request.TransactionId, request.UnitId, request.FunctionCode, [0x0001]),
+            _ => ModbusServerResponse.EchoWrite(request.TransactionId, request.UnitId, request.Pdu)
+        }, port).ConfigureAwait(false);
+
+        worker.Start();
+        await WaitUntilAsync(
+            static state => state == ConnectionState.Connected,
+            worker.GetConnectionState,
+            TimeSpan.FromSeconds(3),
+            "Worker failed to establish initial Modbus connection.").ConfigureAwait(false);
+
+        var firstWrite = await worker.WriteImmediateAsync(tag, (short)11, CancellationToken.None).ConfigureAwait(false);
+        if (!firstWrite.Success)
+        {
+            throw new InvalidOperationException($"First write failed unexpectedly: {firstWrite.Error}");
+        }
+
+        await server.DisposeAsync().ConfigureAwait(false);
+        server = null;
+        await Task.Delay(300).ConfigureAwait(false);
+
+        var disconnectedWrite = await worker.WriteImmediateAsync(tag, (short)12, CancellationToken.None).ConfigureAwait(false);
+        if (disconnectedWrite.Success)
+        {
+            throw new InvalidOperationException("Write should fail while server is down.");
+        }
+
+        server = await ScriptedModbusServer.StartAsync(static request => request.FunctionCode switch
+        {
+            0x06 => ModbusServerResponse.EchoWrite(request.TransactionId, request.UnitId, request.Pdu),
+            0x10 => ModbusServerResponse.WriteMultipleRegistersAck(request.TransactionId, request.UnitId, request.StartAddress, request.Quantity),
+            0x03 => ModbusServerResponse.ReadRegisters(request.TransactionId, request.UnitId, request.FunctionCode, [0x0001]),
+            _ => ModbusServerResponse.EchoWrite(request.TransactionId, request.UnitId, request.Pdu)
+        }, port).ConfigureAwait(false);
+
+        WriteResult recovered = WriteResult.Fail("Reconnect write was not attempted.");
+        for (var attempt = 0; attempt < 20; attempt++)
+        {
+            recovered = await worker.WriteImmediateAsync(tag, (short)(100 + attempt), CancellationToken.None).ConfigureAwait(false);
+            if (recovered.Success)
+            {
+                break;
+            }
+
+            await Task.Delay(200).ConfigureAwait(false);
+        }
+
+        if (!recovered.Success)
+        {
+            throw new InvalidOperationException($"Write did not recover after server restart. Last error: {recovered.Error}");
+        }
+    }
+    finally
+    {
+        if (server is not null)
+        {
+            await server.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+}
+
+static async Task TestModbusSubscriptionChannelReconnectAsync()
+{
+    var port = GetFreeTcpPort();
+    var tag = CreateModbusTag("Drv1.MbCh1.Dev1.Level", "HR:10", TagDataType.Int16);
+    var tagsByNodeId = new Dictionary<string, TagDefinition>(StringComparer.OrdinalIgnoreCase)
+    {
+        [tag.NodeIdentifier] = tag
+    };
+    var scanClasses = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase) { ["default"] = 100 };
+    var channel = new ChannelDefinition(
+        Name: "MbCh1",
+        Endpoint: $"127.0.0.1:{port}",
+        Settings: TagDefinition.EmptySettings,
+        RetryPolicy: new RetryPolicyOptions(InitialDelayMs: 100, MaxDelayMs: 800, JitterFactor: 0, HealthCheckIntervalMs: 60_000),
+        ScanClasses: scanClasses,
+        Devices: [new DeviceDefinition("Dev1", TagDefinition.EmptySettings, [tag])]);
+    var driver = new DriverDefinition(
+        Name: "Drv1",
+        DriverType: ModbusTcpDriverPlugin.TypeName,
+        Settings: TagDefinition.EmptySettings,
+        Channels: [channel]);
+    var runtimeContext = new ChannelRuntimeContext(driver, channel, tagsByNodeId, null);
+    var runtime = new ModbusTcpDriverPlugin().CreateChannelRuntime(runtimeContext);
+    var demandTracker = new DemandTracker();
+    var cache = new InMemoryTagValueCache();
+
+    await using var worker = new ChannelWorker(
+        channel,
+        tagsByNodeId,
+        runtime,
+        demandTracker,
+        cache,
+        null);
+
+    ScriptedModbusServer? server = null;
+    try
+    {
+        server = await ScriptedModbusServer.StartAsync(static request => request.FunctionCode switch
+        {
+            0x03 => ModbusServerResponse.ReadRegisters(request.TransactionId, request.UnitId, request.FunctionCode, [11]),
+            0x06 => ModbusServerResponse.EchoWrite(request.TransactionId, request.UnitId, request.Pdu),
+            0x10 => ModbusServerResponse.WriteMultipleRegistersAck(request.TransactionId, request.UnitId, request.StartAddress, request.Quantity),
+            _ => ModbusServerResponse.EchoWrite(request.TransactionId, request.UnitId, request.Pdu)
+        }, port).ConfigureAwait(false);
+
+        demandTracker.AddSubscriptionDemand(tag.NodeIdentifier);
+        worker.Start();
+
+        await WaitUntilAsync(
+            static state => state == ConnectionState.Connected,
+            worker.GetConnectionState,
+            TimeSpan.FromSeconds(3),
+            "Subscription worker failed to establish initial Modbus connection.").ConfigureAwait(false);
+
+        await WaitUntilAsync(
+            static sample => sample.IsOk && sample.Value == 11,
+            () => ReadCachedInt16(cache, tag.NodeIdentifier),
+            TimeSpan.FromSeconds(3),
+            "Subscription cache did not receive initial value 11.").ConfigureAwait(false);
+
+        await server.DisposeAsync().ConfigureAwait(false);
+        server = null;
+
+        await WaitUntilAsync(
+            static state => state == ConnectionState.Disconnected,
+            worker.GetConnectionState,
+            TimeSpan.FromSeconds(4),
+            "Worker did not transition to Disconnected after server shutdown.").ConfigureAwait(false);
+
+        await Task.Delay(150).ConfigureAwait(false);
+
+        server = await ScriptedModbusServer.StartAsync(static request => request.FunctionCode switch
+        {
+            0x03 => ModbusServerResponse.ReadRegisters(request.TransactionId, request.UnitId, request.FunctionCode, [22]),
+            0x06 => ModbusServerResponse.EchoWrite(request.TransactionId, request.UnitId, request.Pdu),
+            0x10 => ModbusServerResponse.WriteMultipleRegistersAck(request.TransactionId, request.UnitId, request.StartAddress, request.Quantity),
+            _ => ModbusServerResponse.EchoWrite(request.TransactionId, request.UnitId, request.Pdu)
+        }, port).ConfigureAwait(false);
+
+        await WaitUntilAsync(
+            static state => state == ConnectionState.Connected,
+            worker.GetConnectionState,
+            TimeSpan.FromSeconds(5),
+            "Worker did not reconnect after subscription server restart.").ConfigureAwait(false);
+
+        await WaitUntilAsync(
+            static sample => sample.IsOk && sample.Value == 22,
+            () => ReadCachedInt16(cache, tag.NodeIdentifier),
+            TimeSpan.FromSeconds(5),
+            "Subscription cache did not update to post-reconnect value 22.").ConfigureAwait(false);
+    }
+    finally
+    {
+        if (server is not null)
+        {
+            await server.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+}
+
+static async Task TestModbusConnectsWhenServerStartsLaterAsync()
+{
+    var port = GetFreeTcpPort();
+    var tag = CreateModbusTag("Drv1.MbCh1.Dev1.StartupReconnect", "HR:12", TagDataType.Int16);
+    var tagsByNodeId = new Dictionary<string, TagDefinition>(StringComparer.OrdinalIgnoreCase)
+    {
+        [tag.NodeIdentifier] = tag
+    };
+    var scanClasses = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase) { ["default"] = 100 };
+    var channel = new ChannelDefinition(
+        Name: "MbCh1",
+        Endpoint: $"127.0.0.1:{port}",
+        Settings: TagDefinition.EmptySettings,
+        RetryPolicy: new RetryPolicyOptions(InitialDelayMs: 100, MaxDelayMs: 800, JitterFactor: 0, HealthCheckIntervalMs: 60_000),
+        ScanClasses: scanClasses,
+        Devices: [new DeviceDefinition("Dev1", TagDefinition.EmptySettings, [tag])]);
+    var driver = new DriverDefinition(
+        Name: "Drv1",
+        DriverType: ModbusTcpDriverPlugin.TypeName,
+        Settings: TagDefinition.EmptySettings,
+        Channels: [channel]);
+    var runtimeContext = new ChannelRuntimeContext(driver, channel, tagsByNodeId, null);
+    var runtime = new ModbusTcpDriverPlugin().CreateChannelRuntime(runtimeContext);
+    var demandTracker = new DemandTracker();
+    var cache = new InMemoryTagValueCache();
+
+    await using var worker = new ChannelWorker(
+        channel,
+        tagsByNodeId,
+        runtime,
+        demandTracker,
+        cache,
+        null);
+
+    demandTracker.AddSubscriptionDemand(tag.NodeIdentifier);
+    worker.Start();
+
+    await Task.Delay(600).ConfigureAwait(false);
+    if (worker.GetConnectionState() == ConnectionState.Connected)
+    {
+        throw new InvalidOperationException("Worker should not be Connected while server is still down.");
+    }
+
+    await using var server = await ScriptedModbusServer.StartAsync(static request => request.FunctionCode switch
+    {
+        0x03 => ModbusServerResponse.ReadRegisters(request.TransactionId, request.UnitId, request.FunctionCode, [33]),
+        0x06 => ModbusServerResponse.EchoWrite(request.TransactionId, request.UnitId, request.Pdu),
+        0x10 => ModbusServerResponse.WriteMultipleRegistersAck(request.TransactionId, request.UnitId, request.StartAddress, request.Quantity),
+        _ => ModbusServerResponse.EchoWrite(request.TransactionId, request.UnitId, request.Pdu)
+    }, port).ConfigureAwait(false);
+
+    await WaitUntilAsync(
+        static state => state == ConnectionState.Connected,
+        worker.GetConnectionState,
+        TimeSpan.FromSeconds(5),
+        "Worker did not connect after server became available.").ConfigureAwait(false);
+
+    await WaitUntilAsync(
+        static sample => sample.IsOk && sample.Value == 33,
+        () => ReadCachedInt16(cache, tag.NodeIdentifier),
+        TimeSpan.FromSeconds(5),
+        "Subscription cache did not update after delayed server startup.").ConfigureAwait(false);
+}
+
 static async Task AssertThrowsAsync(Func<Task> action, string expectedFragment)
 {
     try
@@ -460,6 +730,52 @@ static ushort[] BuildHighWordDouble(double value)
     return words;
 }
 
+static int GetFreeTcpPort()
+{
+    var listener = new TcpListener(IPAddress.Loopback, 0);
+    listener.Start();
+    var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+    listener.Stop();
+    return port;
+}
+
+static async Task WaitUntilAsync<T>(
+    Func<T, bool> predicate,
+    Func<T> sample,
+    TimeSpan timeout,
+    string failureMessage)
+{
+    var deadline = DateTime.UtcNow + timeout;
+    while (DateTime.UtcNow < deadline)
+    {
+        if (predicate(sample()))
+        {
+            return;
+        }
+
+        await Task.Delay(100).ConfigureAwait(false);
+    }
+
+    throw new InvalidOperationException(failureMessage);
+}
+
+static (bool IsOk, short Value) ReadCachedInt16(ITagValueCache cache, string nodeIdentifier)
+{
+    if (!cache.TryGet(nodeIdentifier, out var snapshot) || snapshot.Value is null)
+    {
+        return (false, default);
+    }
+
+    try
+    {
+        return (true, Convert.ToInt16(snapshot.Value));
+    }
+    catch
+    {
+        return (false, default);
+    }
+}
+
 static IChannelRuntime CreateModbusRuntime(
     string endpoint,
     IReadOnlyDictionary<string, string> channelSettings,
@@ -518,275 +834,4 @@ static TagDefinition CreateModbusTag(string nodeIdentifier, string address, TagD
         ScanClass: "default",
         WriteMode: WriteMode.Immediate,
         Settings: TagDefinition.EmptySettings);
-}
-
-internal sealed class ScriptedModbusServer : IAsyncDisposable
-{
-    private readonly TcpListener _listener;
-    private readonly Func<ModbusRequest, ModbusServerResponse> _handler;
-    private readonly CancellationTokenSource _cts = new();
-    private readonly Task _loopTask;
-    private readonly object _sync = new();
-    private readonly List<ModbusRequest> _requests = [];
-
-    private ScriptedModbusServer(TcpListener listener, Func<ModbusRequest, ModbusServerResponse> handler)
-    {
-        _listener = listener;
-        _handler = handler;
-        _loopTask = Task.Run(() => RunLoopAsync(_cts.Token));
-    }
-
-    public int Port => ((IPEndPoint)_listener.LocalEndpoint).Port;
-
-    public ModbusRequest? LastRequest
-    {
-        get
-        {
-            lock (_sync)
-            {
-                return _requests.Count == 0 ? null : _requests[^1];
-            }
-        }
-    }
-
-    public IReadOnlyList<ModbusRequest> Requests
-    {
-        get
-        {
-            lock (_sync)
-            {
-                return _requests.ToArray();
-            }
-        }
-    }
-
-    public static Task<ScriptedModbusServer> StartAsync(Func<ModbusRequest, ModbusServerResponse> handler)
-    {
-        var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        return Task.FromResult(new ScriptedModbusServer(listener, handler));
-    }
-
-    private async Task RunLoopAsync(CancellationToken cancellationToken)
-    {
-        try
-        {
-            while (!cancellationToken.IsCancellationRequested)
-            {
-                TcpClient client;
-                try
-                {
-                    client = await _listener.AcceptTcpClientAsync(cancellationToken).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                    break;
-                }
-
-                using (client)
-                {
-                    var stream = client.GetStream();
-                    while (!cancellationToken.IsCancellationRequested)
-                    {
-                        ModbusRequest request;
-                        try
-                        {
-                            request = await ReadRequestAsync(stream, cancellationToken).ConfigureAwait(false);
-                        }
-                        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                        {
-                            break;
-                        }
-                        catch
-                        {
-                            break;
-                        }
-
-                        lock (_sync)
-                        {
-                            _requests.Add(request);
-                        }
-
-                        var response = _handler(request);
-                        var tx = unchecked((ushort)(response.TransactionId + response.TransactionIdOffset));
-                        var unit = response.UnitIdOverride ?? request.UnitId;
-                        var frame = BuildFrame(tx, unit, response.Pdu);
-                        await stream.WriteAsync(frame, cancellationToken).ConfigureAwait(false);
-                    }
-                }
-            }
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            // Expected during shutdown.
-        }
-    }
-
-    private static async Task<ModbusRequest> ReadRequestAsync(NetworkStream stream, CancellationToken cancellationToken)
-    {
-        var header = new byte[7];
-        await ReadExactAsync(stream, header, cancellationToken).ConfigureAwait(false);
-
-        var transactionId = BinaryPrimitives.ReadUInt16BigEndian(header.AsSpan(0, 2));
-        var protocolId = BinaryPrimitives.ReadUInt16BigEndian(header.AsSpan(2, 2));
-        if (protocolId != 0)
-        {
-            throw new InvalidOperationException($"Invalid protocol id {protocolId}.");
-        }
-
-        var length = BinaryPrimitives.ReadUInt16BigEndian(header.AsSpan(4, 2));
-        var unitId = header[6];
-        if (length < 2)
-        {
-            throw new InvalidOperationException($"Invalid MBAP length {length}.");
-        }
-
-        var pdu = new byte[length - 1];
-        await ReadExactAsync(stream, pdu, cancellationToken).ConfigureAwait(false);
-        var functionCode = pdu[0];
-
-        ushort startAddress = 0;
-        ushort quantity = 0;
-        ushort[] registerValues = [];
-
-        if ((functionCode is >= 0x01 and <= 0x06 or 0x10) && pdu.Length >= 5)
-        {
-            startAddress = BinaryPrimitives.ReadUInt16BigEndian(pdu.AsSpan(1, 2));
-            quantity = functionCode == 0x10
-                ? BinaryPrimitives.ReadUInt16BigEndian(pdu.AsSpan(3, 2))
-                : (ushort)1;
-
-            if (functionCode is >= 0x01 and <= 0x04)
-            {
-                quantity = BinaryPrimitives.ReadUInt16BigEndian(pdu.AsSpan(3, 2));
-            }
-
-            if (functionCode == 0x10)
-            {
-                var byteCount = pdu[5];
-                registerValues = new ushort[byteCount / 2];
-                for (var index = 0; index < registerValues.Length; index++)
-                {
-                    registerValues[index] = BinaryPrimitives.ReadUInt16BigEndian(pdu.AsSpan(6 + (index * 2), 2));
-                }
-            }
-        }
-
-        return new ModbusRequest(transactionId, unitId, functionCode, startAddress, quantity, registerValues, pdu);
-    }
-
-    private static byte[] BuildFrame(ushort transactionId, byte unitId, byte[] pdu)
-    {
-        var frame = new byte[7 + pdu.Length];
-        BinaryPrimitives.WriteUInt16BigEndian(frame.AsSpan(0, 2), transactionId);
-        BinaryPrimitives.WriteUInt16BigEndian(frame.AsSpan(2, 2), 0);
-        BinaryPrimitives.WriteUInt16BigEndian(frame.AsSpan(4, 2), (ushort)(pdu.Length + 1));
-        frame[6] = unitId;
-        pdu.CopyTo(frame.AsSpan(7));
-        return frame;
-    }
-
-    private static async Task ReadExactAsync(NetworkStream stream, byte[] buffer, CancellationToken cancellationToken)
-    {
-        var total = 0;
-        while (total < buffer.Length)
-        {
-            var read = await stream.ReadAsync(buffer.AsMemory(total), cancellationToken).ConfigureAwait(false);
-            if (read == 0)
-            {
-                throw new IOException("Socket closed.");
-            }
-
-            total += read;
-        }
-    }
-
-    public async ValueTask DisposeAsync()
-    {
-        _cts.Cancel();
-        _listener.Stop();
-
-        try
-        {
-            await _loopTask.ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-            // Expected during shutdown.
-        }
-
-        _cts.Dispose();
-    }
-}
-
-internal sealed record ModbusRequest(
-    ushort TransactionId,
-    byte UnitId,
-    byte FunctionCode,
-    ushort StartAddress,
-    ushort Quantity,
-    ushort[] RegisterValues,
-    byte[] Pdu);
-
-internal sealed record ModbusServerResponse(
-    ushort TransactionId,
-    byte? UnitIdOverride,
-    short TransactionIdOffset,
-    byte[] Pdu)
-{
-    public static ModbusServerResponse EchoWrite(ushort transactionId, byte unitId, byte[] pdu)
-    {
-        return new ModbusServerResponse(transactionId, unitId, 0, pdu);
-    }
-
-    public static ModbusServerResponse WriteMultipleRegistersAck(ushort transactionId, byte unitId, ushort startAddress, ushort quantity)
-    {
-        var pdu = new byte[5];
-        pdu[0] = 0x10;
-        BinaryPrimitives.WriteUInt16BigEndian(pdu.AsSpan(1, 2), startAddress);
-        BinaryPrimitives.WriteUInt16BigEndian(pdu.AsSpan(3, 2), quantity);
-        return new ModbusServerResponse(transactionId, unitId, 0, pdu);
-    }
-
-    public static ModbusServerResponse ReadBits(ushort transactionId, byte unitId, byte functionCode, IReadOnlyList<bool> bits)
-    {
-        var byteCount = (bits.Count + 7) / 8;
-        var pdu = new byte[2 + byteCount];
-        pdu[0] = functionCode;
-        pdu[1] = (byte)byteCount;
-
-        for (var index = 0; index < bits.Count; index++)
-        {
-            if (bits[index])
-            {
-                pdu[2 + (index / 8)] |= (byte)(1 << (index % 8));
-            }
-        }
-
-        return new ModbusServerResponse(transactionId, unitId, 0, pdu);
-    }
-
-    public static ModbusServerResponse ReadRegisters(
-        ushort transactionId,
-        byte unitId,
-        byte functionCode,
-        IReadOnlyList<ushort> registers,
-        short transactionIdOffset = 0)
-    {
-        var pdu = new byte[2 + (registers.Count * 2)];
-        pdu[0] = functionCode;
-        pdu[1] = (byte)(registers.Count * 2);
-
-        for (var index = 0; index < registers.Count; index++)
-        {
-            BinaryPrimitives.WriteUInt16BigEndian(pdu.AsSpan(2 + (index * 2), 2), registers[index]);
-        }
-
-        return new ModbusServerResponse(transactionId, unitId, transactionIdOffset, pdu);
-    }
-
-    public static ModbusServerResponse Exception(ushort transactionId, byte unitId, byte functionCode, byte exceptionCode)
-    {
-        return new ModbusServerResponse(transactionId, unitId, 0, [(byte)(functionCode | 0x80), exceptionCode]);
-    }
 }

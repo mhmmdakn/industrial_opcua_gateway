@@ -1,0 +1,63 @@
+{
+  "name": "modbus-mixed-warmup-baseline-ramp-spike-soak",
+  "endpoint": "127.0.0.1:15020",
+  "unitId": 1,
+  "useLocalServer": true,
+  "connectTimeoutMs": 2000,
+  "requestTimeoutMs": 2500,
+  "reconnectDelayMs": 250,
+  "addressSpaceSize": 4000,
+  "readQuantityMin": 4,
+  "readQuantityMax": 16,
+  "writeMultipleQuantity": 4,
+  "jitterPercent": 15,
+  "randomSeed": 42,
+  "mix": {
+    "readHoldingWeight": 70,
+    "readInputWeight": 20,
+    "writeSingleWeight": 5,
+    "writeMultipleWeight": 5
+  },
+  "stages": [
+    {
+      "name": "warmup",
+      "durationSeconds": 60,
+      "targetClients": 50,
+      "requestIntervalMs": 220,
+      "linearRamp": false,
+      "resizeTickMs": 1000
+    },
+    {
+      "name": "baseline",
+      "durationSeconds": 120,
+      "targetClients": 200,
+      "requestIntervalMs": 200,
+      "linearRamp": true,
+      "resizeTickMs": 1000
+    },
+    {
+      "name": "stress-ramp",
+      "durationSeconds": 180,
+      "targetClients": 700,
+      "requestIntervalMs": 170,
+      "linearRamp": true,
+      "resizeTickMs": 1000
+    },
+    {
+      "name": "spike",
+      "durationSeconds": 60,
+      "targetClients": 1200,
+      "requestIntervalMs": 140,
+      "linearRamp": false,
+      "resizeTickMs": 500
+    },
+    {
+      "name": "soak",
+      "durationSeconds": 300,
+      "targetClients": 450,
+      "requestIntervalMs": 200,
+      "linearRamp": true,
+      "resizeTickMs": 1000
+    }
+  ]
+}
